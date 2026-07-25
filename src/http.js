@@ -31,11 +31,13 @@ export function privacyPolicy() {
 <body style="max-width:760px;margin:40px auto;padding:0 20px;font:16px/1.55 system-ui,sans-serif;color:#202124">
 <h1>SkyBlock GPT Proxy Privacy Policy</h1>
 <p><strong>Last updated:</strong> July 13, 2026</p>
-<p>This unofficial service helps a Custom GPT retrieve compact Hypixel SkyBlock profile, inventory, resource, Bazaar, auction, and event data.</p>
+<p>This unofficial service helps a Custom GPT retrieve and analyze Hypixel SkyBlock profile, inventory, resource, Bazaar, auction, and event data. It decodes item NBT, normalizes fields, computes derived values, and paginates results, returning compact transformative analysis rather than copies of the Hypixel Public API.</p>
 <h2>Data processed</h2>
 <p>The service processes Minecraft UUIDs, optional SkyBlock profile identifiers, item or product IDs, and the public or API-enabled data needed to answer the request.</p>
 <h2>Use and retention</h2>
 <p>Data is used only to complete requested lookups. The Worker does not intentionally maintain a user database or persist player-profile responses. Static resources and non-player public market responses may be cached briefly to reduce upstream requests. Infrastructure providers may process ordinary security and operational logs under their own policies.</p>
+<h2>Access</h2>
+<p>This service is a private backend for a single Custom GPT. Every data route requires an authentication secret, so it is not an open or public API and cannot be used as a proxy by third parties. Static resources are cached and player profiles are fetched on demand to respect upstream rate limits.</p>
 <h2>Third parties</h2>
 <p>Requests are processed through Cloudflare and the Hypixel Public API. This service is unofficial and is not affiliated with or endorsed by Hypixel.</p>
 <h2>Secrets</h2>

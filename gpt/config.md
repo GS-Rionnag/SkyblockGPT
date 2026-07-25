@@ -6,7 +6,7 @@ SkyBlockGPT
 
 ## Description
 
-An unofficial Hypixel SkyBlock assistant that checks live profiles, HotM/HotF, skills, gear, accessories, inventories, NBT, Bazaar, auctions, and market history—then does the math and gives sourced progression advice. Made by GS
+An unofficial Hypixel SkyBlock assistant that checks live profiles, HotM/HotF, skills, gear, accessories, inventories, NBT, Bazaar, auctions, and market history—then does the math and gives sourced progression advice. Not affiliated with or endorsed by Hypixel. Made by GS
 
 ## Conversation starters
 
