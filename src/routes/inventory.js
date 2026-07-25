@@ -3,7 +3,7 @@ import { ClientError, json, UpstreamError } from "../http.js";
 import { readIntegerParameter, requireContainerId } from "../params.js";
 import {
   containerMetadata,
-  decodeInventoryBlob,
+  decodeContainer,
   expandNbtItem,
   findNbtContainers,
   findSacksCounts,
@@ -59,7 +59,7 @@ export async function handleInventoryContainer(url, env) {
   }
 
   const limit = detail === "full" ? Math.min(requestedLimit, 5) : requestedLimit;
-  const decoded = await decodeInventoryBlob(container.blob);
+  const decoded = await decodeContainer(container);
   if (decoded.error) {
     throw new UpstreamError(`The ${container.label} data was present but could not be decoded: ${decoded.error}`, 502);
   }
@@ -96,7 +96,7 @@ export async function handleInventoryItem(url, env) {
     throw new ClientError("That inventory container was not found. Request the inventory index again for valid container IDs.", 404);
   }
 
-  const decoded = await decodeInventoryBlob(container.blob);
+  const decoded = await decodeContainer(container);
   if (decoded.error) {
     throw new UpstreamError(`The ${container.label} data was present but could not be decoded: ${decoded.error}`, 502);
   }

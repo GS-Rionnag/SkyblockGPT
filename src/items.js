@@ -42,6 +42,49 @@ export async function compactAccessories(member) {
   };
 }
 
+// Hypixel moved the armor Wardrobe and the Equipment Wardrobe out of
+// `inventory.wardrobe_contents` and into `member.loadout`, where every piece is
+// its own tiny NBT blob keyed by set number and slot name.
+const ARMOR_LOADOUT_PIECES = ["HELMET", "CHESTPLATE", "LEGGINGS", "BOOTS"];
+const EQUIPMENT_LOADOUT_PIECES = ["EQUIPMENT_SLOT_1", "EQUIPMENT_SLOT_2", "EQUIPMENT_SLOT_3", "EQUIPMENT_SLOT_4"];
+
+function loadoutWardrobeParts(sets, pieceKeys) {
+  if (!sets || typeof sets !== "object") return [];
+  const parts = [];
+  for (const [key, set] of Object.entries(sets)) {
+    // Numeric keys are wardrobe sets; `equipped_set` and friends are metadata.
+    if (!/^\d+$/.test(key) || !set || typeof set !== "object") continue;
+    for (const [offset, piece] of pieceKeys.entries()) {
+      if (isNbtBlob(set[piece])) parts.push({ slot: Number(key) * 4 + offset, blob: set[piece] });
+    }
+  }
+  return parts.sort((left, right) => left.slot - right.slot);
+}
+
+function loadoutWardrobeContainers(member, existing) {
+  const loadout = member?.loadout;
+  if (!loadout || typeof loadout !== "object") return [];
+
+  const hasLegacyWardrobe = existing.some((entry) => entry.kind === "wardrobe");
+  const wardrobes = [
+    // Skip the loadout armor wardrobe when a legacy wardrobe_contents blob
+    // already covers the same pieces, so the index lists each wardrobe once.
+    { id: "loadout.armor", kind: "wardrobe", sets: loadout.armor, pieces: ARMOR_LOADOUT_PIECES, skip: hasLegacyWardrobe },
+    { id: "loadout.equipment", kind: "equipment_wardrobe", sets: loadout.equipment, pieces: EQUIPMENT_LOADOUT_PIECES, skip: false },
+  ];
+
+  return wardrobes
+    .filter((wardrobe) => !wardrobe.skip)
+    .map((wardrobe) => ({
+      id: wardrobe.id,
+      label: CONTAINER_LABELS[wardrobe.kind],
+      kind: wardrobe.kind,
+      // Slot = set * 4 + piece offset, so one paged container covers every set.
+      parts: loadoutWardrobeParts(wardrobe.sets, wardrobe.pieces),
+    }))
+    .filter((entry) => entry.parts.length > 0);
+}
+
 export function findNbtContainers(member) {
   const found = new Map();
   const visited = new WeakSet();
@@ -79,9 +122,10 @@ export function findNbtContainers(member) {
     if (value && typeof value === "object") scan(value, key, 0);
   }
 
-  return [...found.values()]
-    .filter((entry) => entry.kind !== "backpack_icon")
-    .sort((left, right) => left.id.localeCompare(right.id));
+  const containers = [...found.values()].filter((entry) => entry.kind !== "backpack_icon");
+  containers.push(...loadoutWardrobeContainers(member, containers));
+
+  return containers.sort((left, right) => left.id.localeCompare(right.id));
 }
 
 export function findSacksCounts(member) {
@@ -105,12 +149,16 @@ function isNbtBlob(value) {
 }
 
 export function containerMetadata(container) {
-  const encoded = typeof container.blob === "string" ? container.blob : container.blob?.data || "";
+  const blobs = Array.isArray(container.parts) ? container.parts.map((part) => part.blob) : [container.blob];
+  const encodedLength = blobs.reduce((sum, blob) => {
+    const encoded = typeof blob === "string" ? blob : blob?.data || "";
+    return sum + encoded.replace(/\s+/g, "").length;
+  }, 0);
   return {
     id: container.id,
     label: container.label,
     kind: container.kind,
-    encoded_bytes_estimate: Math.floor(encoded.replace(/\s+/g, "").length * 0.75),
+    encoded_bytes_estimate: Math.floor(encodedLength * 0.75),
   };
 }
 
@@ -134,28 +182,30 @@ function inventoryContainerKind(path) {
   return "other";
 }
 
+const CONTAINER_LABELS = {
+  accessory_bag: "Accessory Bag",
+  armor: "Worn Armor",
+  equipment: "Equipment",
+  wardrobe: "Wardrobe",
+  equipment_wardrobe: "Equipment Wardrobe",
+  ender_chest: "Ender Chest",
+  backpack_icon: "Backpack Icon",
+  backpack: "Backpack",
+  personal_vault: "Personal Vault",
+  fishing_bag: "Fishing Bag",
+  potion_bag: "Potion Bag",
+  quiver: "Quiver",
+  candy_bag: "Candy Bag",
+  sacks_bag: "Sacks Bag",
+  inventory: "Main Inventory",
+  bag: "Bag",
+  other: "Item Container",
+};
+
 function inventoryContainerLabel(path) {
   const kind = inventoryContainerKind(path);
-  const labels = {
-    accessory_bag: "Accessory Bag",
-    armor: "Worn Armor",
-    equipment: "Equipment",
-    wardrobe: "Wardrobe",
-    ender_chest: "Ender Chest",
-    backpack_icon: "Backpack Icon",
-    backpack: "Backpack",
-    personal_vault: "Personal Vault",
-    fishing_bag: "Fishing Bag",
-    potion_bag: "Potion Bag",
-    quiver: "Quiver",
-    candy_bag: "Candy Bag",
-    sacks_bag: "Sacks Bag",
-    inventory: "Main Inventory",
-    bag: "Bag",
-    other: "Item Container",
-  };
   const suffix = kind === "backpack" ? ` (${path.split(".").at(-1)})` : "";
-  return `${labels[kind]}${suffix}`;
+  return `${CONTAINER_LABELS[kind]}${suffix}`;
 }
 
 export async function compactGear(member) {
@@ -203,6 +253,34 @@ export async function compactGear(member) {
         ? "Hypixel returned inventory data, but the proxy could not decode it."
         : null,
     decode_errors: Object.keys(decodeErrors).length ? decodeErrors : null,
+  };
+}
+
+export async function decodeContainer(container) {
+  if (!Array.isArray(container.parts)) return decodeInventoryBlob(container.blob);
+
+  const results = await Promise.all(container.parts.map((part) => decodeInventoryBlob(part.blob)));
+  const records = [];
+  let firstError = null;
+
+  for (const [index, result] of results.entries()) {
+    if (result.error) {
+      firstError ??= result.error;
+      continue;
+    }
+    for (const record of result.records) {
+      // Each loadout piece decodes as its own single-item container, so the
+      // synthetic wardrobe slot replaces the piece-local slot 0.
+      records.push({ summary: { ...record.summary, slot: container.parts[index].slot }, raw: record.raw });
+    }
+  }
+
+  // A wardrobe with one corrupt piece stays readable; fail only when nothing decodes.
+  return {
+    present: true,
+    items: records.map((record) => record.summary),
+    records,
+    error: records.length ? null : firstError,
   };
 }
 

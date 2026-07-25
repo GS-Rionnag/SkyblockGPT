@@ -107,6 +107,8 @@ Inventory access is deliberately two-stage:
 
 This avoids connector resource limits. Never replace it with a route that dumps the full profile or every decoded item in one response.
 
+Hypixel stores the armor Wardrobe and the Equipment Wardrobe under `member.loadout` as one NBT blob per piece. The Worker aggregates them into the synthetic containers `loadout.armor` (kind `wardrobe`) and `loadout.equipment` (kind `equipment_wardrobe`), with item slot `set * 4 + piece offset`. When a legacy `wardrobe_contents` blob is present, it wins and the duplicate `loadout.armor` container is suppressed.
+
 ## Market behavior
 
 Hypixel is the live source for Bazaar and the verification source for active auctions. SkyCofl is the historical/comparable source. Do not silently mix:
