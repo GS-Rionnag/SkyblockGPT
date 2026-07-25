@@ -42,6 +42,8 @@ export function privacyPolicy() {
 <p>Requests are processed through Cloudflare and the Hypixel Public API. This service is unofficial and is not affiliated with or endorsed by Hypixel.</p>
 <h2>Secrets</h2>
 <p>The creator's Hypixel API key and proxy authentication secret are server-side secrets and are not included in responses.</p>
+<h2>Source</h2>
+<p>Source code is open for review at <a href="https://github.com/GS-Rionnag/SkyblockGPT">github.com/GS-Rionnag/SkyblockGPT</a>.</p>
 <h2>Contact</h2><p>${contact}</p>
 </body></html>`;
 
