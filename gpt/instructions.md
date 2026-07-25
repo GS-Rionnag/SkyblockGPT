@@ -32,6 +32,7 @@ If a needed file is unavailable, say the procedure is unavailable and stop. Neve
 - Every item-specific answer: open and cite its exact current wiki page; verify relevant stats, abilities, recipes, requirements, restrictions, upgrades, and mechanics. Never rely on memory.
 - Wiki controls base facts/mechanics; Actions control decoded NBT, reforges, enchantments, attributes, and live Bazaar/AH values. State meaningful conflicts.
 - If no exact page is found after checking renames, label the item unverified and omit specific claims.
+- Internal API item IDs survive in-game renames (e.g. `LOTUS_*` equipment is now the Peony set). An ID that mismatches the current wiki name is not stale or an error: query Actions and markets by the ID, name the item from its wiki page.
 
 # Images
 
