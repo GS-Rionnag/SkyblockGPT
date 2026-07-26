@@ -46,7 +46,7 @@ export function compareBazaarProducts(left, right, sort, order) {
   return order === "desc" ? -comparison : comparison;
 }
 
-export async function compactAuction(auction, full = false) {
+export async function compactAuction(auction, full = false, report = null) {
   const summary = {
     uuid: auction.uuid || null,
     auctioneer: auction.auctioneer || null,
@@ -70,15 +70,15 @@ export async function compactAuction(auction, full = false) {
   let decodeError = null;
   if (auction.item_bytes) {
     const decoded = await decodeInventoryBlob(auction.item_bytes);
-    decodedItem = decoded.records[0] ? expandNbtItem(decoded.records[0]) : null;
+    decodedItem = decoded.records[0] ? await expandNbtItem(decoded.records[0], report) : null;
     decodeError = decoded.error;
   }
   return {
     ...summary,
-    coop: sanitize(auction.coop || [], 3, 100),
+    coop: sanitize(auction.coop || [], 3, 100, report),
     item_lore: cleanItemName(auction.item_lore),
-    bids: sanitize(auction.bids || [], 6, 150),
-    claimed_bidders: sanitize(auction.claimed_bidders || [], 4, 150),
+    bids: sanitize(auction.bids || [], 6, 150, report),
+    claimed_bidders: sanitize(auction.claimed_bidders || [], 4, 150, report),
     decoded_item: decodedItem,
     decode_error: decodeError,
   };
@@ -113,7 +113,7 @@ export function skyBlockItemIdsMatch(left, right) {
   return normalize(left) === normalize(right);
 }
 
-export async function compactEndedAuction(auction, full = false) {
+export async function compactEndedAuction(auction, full = false, report = null) {
   const summary = {
     auction_id: auction.auction_id || null,
     seller: auction.seller || null,
@@ -129,8 +129,30 @@ export async function compactEndedAuction(auction, full = false) {
   const decoded = await decodeInventoryBlob(blob);
   return {
     ...summary,
-    decoded_item: decoded.records[0] ? expandNbtItem(decoded.records[0]) : null,
+    decoded_item: decoded.records[0] ? await expandNbtItem(decoded.records[0], report) : null,
     decode_error: decoded.error,
+  };
+}
+
+// Identity-only decode for ended-auction summary rows: auctions_ended exposes
+// only item_bytes, so without a decode a summary row cannot name what sold.
+// One base64 + gzip + NBT pass per row keeps just the SkyBlock item ID and the
+// display name; full NBT expansion stays behind detail=full. Callers budget
+// how many rows get this pass per call (the lowest-bin decode-budget pattern).
+export async function decodeEndedAuctionItemIdentity(auction) {
+  if (!auction?.item_bytes) {
+    return { item_id: null, item_name: null, decode_status: "no_item_bytes" };
+  }
+  const blob = typeof auction.item_bytes === "string" ? { data: auction.item_bytes } : auction.item_bytes;
+  const decoded = await decodeInventoryBlob(blob);
+  const summary = decoded.records[0]?.summary || null;
+  if (decoded.error || !summary) {
+    return { item_id: null, item_name: null, decode_status: "decode_failed" };
+  }
+  return {
+    item_id: summary.skyblock_id || null,
+    item_name: summary.name || null,
+    decode_status: "decoded",
   };
 }
 

@@ -15,7 +15,7 @@
       "get": {
         "operationId": "lookupMinecraftProfileByName",
         "summary": "Resolve a Minecraft username",
-        "description": "Returns the current Minecraft Java username and permanent UUID for a valid username. Use the returned id as the UUID in player-specific Hypixel SkyBlock requests.",
+        "description": "Returns the current Minecraft Java username and permanent UUID for a valid username. Use the returned id as the UUID in player-specific Hypixel SkyBlock requests. Mojang rate-limits this endpoint; a 429 means too many lookups, so reuse already-resolved UUIDs and do not retry immediately.",
         "x-openai-isConsequential": false,
         "security": [],
         "parameters": [
@@ -59,6 +59,9 @@
           },
           "404": {
             "description": "No Minecraft profile exists for that username"
+          },
+          "429": {
+            "description": "Mojang rate limit reached. Reuse an already-resolved UUID or wait before retrying; never retry in a loop."
           }
         }
       }

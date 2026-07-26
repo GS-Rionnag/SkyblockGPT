@@ -10,10 +10,12 @@ An unofficial Hypixel SkyBlock assistant that checks live profiles, HotM/HotF, s
 
 ## Conversation starters
 
-1. Ask me which item I want, then walk the auction house to a genuinely authoritative lowest BIN: loop every segment from `next_start_page`, carry the same `expected_last_updated`, keep the running minimum, and restart at page 0 if a 409 says the snapshot moved. Report `segments_required`, `decodes_performed`, and whether `authoritative_lowest_bin` is real or still null. Then price the Bazaar craft against it and compute median, 10% trimmed mean, and outlier bounds over recent sales.
-2. Ask for my IGN and profile, then derive every level Hypixel only ships as raw XP: all six slayers—vampire caps at 5 while the rest cap at 9—plus Catacombs and each dungeon class. For each, show experience, derived level, XP to next, percent progress, `table_version`, and the ladder's exact `source_url`. Flag any ladder whose `source_authority` is not the pinned wiki, then rank which grind buys the most levels per million XP.
-3. Ask for my IGN, then pull my pets and treat the payload as an object, not a list. Reconcile `total_pets` against `returned` and tell me precisely what truncated and why before drawing any conclusion. Derive each pet's level from its own rarity ladder, keeping any Golden Dragon on its own curve rather than the shared legendary one. Rank my ten most valuable pets by XP remaining to max and total Bazaar cost to finish.
-4. Ask for my IGN, then pull my bestiary and rift sections and check `payload_truncated` on each before concluding anything. Compute kills-to-next-tier for the ten mobs I am closest on—verify every tier threshold on the exact official wiki page, since no bestiary ladder ships with the gateway—then rank them by kills required per remaining tier and tell me which is actually worth my time.
+GPT Builder silently truncates each conversation starter at 300 characters. Keep every starter at or below 300; nothing enforces this automatically.
+
+1. Ask me which item I want, then walk the auction house to an authoritative lowest BIN: loop every segment from next_start_page, restart at page 0 on a 409 snapshot change, and report whether authoritative_lowest_bin is real or still null. Then price the Bazaar craft against it with median stats.
+2. Ask for my IGN and profile, then derive every level Hypixel ships only as raw XP: all six slayers (vampire caps at 5, the rest at 9), Catacombs, and each dungeon class. Show XP, derived level, XP to next, and each ladder source_url, then rank which grind buys the most levels per million XP.
+3. Ask for my IGN, then pull my pets. Reconcile total_pets against returned and explain any truncation before concluding. Derive each pet level from its own rarity ladder, Golden Dragon on its own curve, then rank my ten most valuable pets by XP remaining to max and Bazaar cost to finish.
+4. Ask for my IGN, then pull my typed bestiary families. Report my milestone and Bestiary level, then rank the ten families closest to their next tier by kills still needed, treating tier: null as unknown rather than guessed, and tell me which grind is actually worth my time.
 
 ## Capabilities
 

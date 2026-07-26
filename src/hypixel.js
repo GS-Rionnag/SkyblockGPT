@@ -1,6 +1,6 @@
 import { UpstreamError } from "./http.js";
 
-const UPSTREAM_USER_AGENT = "SkyblockGPT/2.7.0 (contact: Discord gs._)";
+const UPSTREAM_USER_AGENT = "SkyblockGPT/2.10.0 (contact: Discord gs._)";
 const memoryCache = new Map();
 let cachedSkillResource = null;
 let cachedSkillResourceExpiresAt = 0;
@@ -10,6 +10,12 @@ let cachedSkillResourceExpiresAt = 0;
 // data changes too fast to be worth staleness.
 const CACHE_POLICY = new Map([
   ["/v2/skyblock/profiles", 0],
+  // Guild, network player, and status responses are player-keyed, so they
+  // follow the players-are-never-cached rule; global counts may cache 60s.
+  ["/v2/guild", 0],
+  ["/v2/player", 0],
+  ["/v2/status", 0],
+  ["/v2/counts", 60],
   ["/v2/skyblock/museum", 0],
   ["/v2/skyblock/garden", 0],
   ["/v2/skyblock/bingo", 0],
@@ -119,6 +125,23 @@ export async function fetchSkyBlockItemNameMap(env) {
     authenticated: false,
   });
   return new Map((Array.isArray(payload.items) ? payload.items : []).map((item) => [item.id, item.name]));
+}
+
+// Full catalog records (tier, category, name) keyed by item id. Shares the
+// cached /v2/resources/skyblock/items payload with the name map. Returns null
+// on failure so callers report derived values as unavailable, never zero.
+export async function fetchSkyBlockItemCatalogMap(env) {
+  try {
+    const payload = await fetchHypixelJson("/v2/resources/skyblock/items", env, {}, {
+      authenticated: false,
+      timeoutMs: 8_000,
+    });
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    if (!items.length) return null;
+    return new Map(items.map((item) => [item.id, item]));
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchCollectionResource(env) {

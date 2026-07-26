@@ -10,7 +10,7 @@ Call the summary. SkyBlock level is `skyblock_experience / 100`. Report the whol
 
 - Prefer the calculated `level`, `level_with_progress`, and progress fields in summary `data.skills.skills[skill]`, or the `skills`/`stats` compact section.
 - If `levels_calculated` is false, request the `skills` resource, sum thresholds in order, and preserve overflow progress.
-- Apply the reported cap. If skill data is hidden, say so.
+- Apply the reported cap. `max_level` is already per player: Farming rises with the Jacob's `farming_level_cap` perk and Taming with unique sacrificed pet types; `level_cap` shows base/bonus/source, and the sacrificed list itself is in `section=pets` under `pet_care`. If skill data is hidden, say so.
 
 ## Bank balances
 

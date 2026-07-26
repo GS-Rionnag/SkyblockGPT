@@ -1,4 +1,5 @@
 import {
+  createTruncationReport,
   number,
   objectOrEmpty,
   optionalNumber,
@@ -17,7 +18,7 @@ import {
   requireItemTag,
 } from "../params.js";
 import { fetchHypixelJson, fetchSkyBlockItemNameMap } from "../hypixel.js";
-import { decodeInventoryBlob } from "../items.js";
+import { decodeInventoryBlob, formatItemId } from "../items.js";
 import {
   auctionPrice,
   binPrice,
@@ -25,6 +26,7 @@ import {
   compactBazaarProduct,
   compactEndedAuction,
   compareBazaarProducts,
+  decodeEndedAuctionItemIdentity,
   normalizeItemSearchText,
   resolveSkyBlockItem,
   skyBlockItemIdsMatch,
@@ -80,11 +82,24 @@ export async function handleBazaarProduct(url, env) {
     (itemNames.get(id) || "").toLowerCase() === requestedProduct.replaceAll("_", " ").toLowerCase()
   );
   const selected = exact || (named.length === 1 ? named[0] : null);
+  if (!selected && named.length > 1) {
+    // Ambiguous display name: same 400-with-exact-IDs contract as lowest-bin,
+    // plus structured candidates so the caller can retry without re-searching.
+    return json({
+      success: false,
+      error: "That product name matches more than one Bazaar product. Retry with one exact product_id from candidates.",
+      candidates: named.slice(0, 12).map(([id]) => ({
+        product_id: id,
+        display_name: itemNames.get(id) || formatItemId(id),
+      })),
+    }, 400);
+  }
   if (!selected) {
     throw new ClientError("That Bazaar product was not found. Search the Bazaar product index for the exact product ID.", 404);
   }
 
   const [productId, product] = selected;
+  const report = createTruncationReport();
   const summary = compactBazaarProduct(product, itemNames);
   return json({
     success: true,
@@ -98,10 +113,11 @@ export async function handleBazaarProduct(url, env) {
       source: "Hypixel Public API",
       source_last_updated: optionalNumber(payload.lastUpdated),
       ...summary,
-      sell_summary: sanitize(product.sell_summary || [], 5, 200),
-      buy_summary: sanitize(product.buy_summary || [], 5, 200),
-      quick_status: sanitize(product.quick_status || {}, 5, 100),
+      sell_summary: sanitize(product.sell_summary || [], 5, 200, report),
+      buy_summary: sanitize(product.buy_summary || [], 5, 200, report),
+      quick_status: sanitize(product.quick_status || {}, 5, 100, report),
       product_id: productId,
+      truncated: report.truncated,
     },
   });
 }
@@ -146,8 +162,9 @@ export async function handleAuctionPage(url, env) {
   const binPriceOf = new Map(binRecords.map((auction) => [auction, binPrice(auction)]));
   const pageLowestBinAuction = [...binRecords]
     .sort((left, right) => binPriceOf.get(left) - binPriceOf.get(right))[0] || null;
+  const report = createTruncationReport();
   const pagination = paginateRecords(records, resultPage, limit);
-  pagination.items = await Promise.all(pagination.items.map((auction) => compactAuction(auction, detail === "full")));
+  pagination.items = await Promise.all(pagination.items.map((auction) => compactAuction(auction, detail === "full", report)));
 
   return json({
     success: true,
@@ -166,11 +183,12 @@ export async function handleAuctionPage(url, env) {
       page_lowest_bin: pageLowestBinAuction
         ? {
             scope: "Filtered matches on this official upstream page only; not a global lowest BIN.",
-            ...await compactAuction(pageLowestBinAuction, false),
+            ...await compactAuction(pageLowestBinAuction, false, report),
             bin_price: binPrice(pageLowestBinAuction),
           }
         : null,
       detail,
+      truncated: report.truncated,
       ...pagination,
     },
   });
@@ -342,16 +360,19 @@ export async function handleAuctionLookup(url, env) {
     authenticated: true,
   });
   const records = Array.isArray(payload.auctions) ? payload.auctions : [];
+  const report = createTruncationReport();
   const pagination = paginateRecords(records, page, limit);
-  pagination.items = await Promise.all(pagination.items.map((auction) => compactAuction(auction, requestedDetail === "full")));
+  pagination.items = await Promise.all(pagination.items.map((auction) => compactAuction(auction, requestedDetail === "full", report)));
 
   return json({
     success: true,
     data: {
       source: "Hypixel Public API",
+      source_last_updated: optionalNumber(payload.lastUpdated),
       lookup_type: lookupType,
       lookup_value: normalizeUuid(lookupValue),
       detail: requestedDetail,
+      truncated: report.truncated,
       ...pagination,
     },
   });
@@ -367,9 +388,37 @@ export async function handleEndedAuctions(url, env) {
     authenticated: false,
   });
   const records = (Array.isArray(payload.auctions) ? payload.auctions : [])
-    .filter((auction) => !query || `${auction.auction_id || ""} ${auction.seller || ""}`.toLowerCase().includes(query));
+    .filter((auction) => !query || `${auction.auction_id || ""} ${auction.seller || ""} ${auction.buyer || ""}`.toLowerCase().includes(query));
+  const report = createTruncationReport();
   const pagination = paginateRecords(records, page, limit);
-  pagination.items = await Promise.all(pagination.items.map((auction) => compactEndedAuction(auction, detail === "full")));
+
+  // Summary rows get an identity-only decode (item_id + item_name) because
+  // auctions_ended carries no plain-JSON item fields at all. Decodes are the
+  // dominant cost, so they are budgeted per call like lowest-bin's scan: the
+  // default page (25 rows) always fits, and only a max-size 50-row page can
+  // leave its tail rows marked decode_budget_exhausted instead of named.
+  const decodeBudget = 40;
+  let decodesPerformed = 0;
+  let decodeBudgetExhausted = false;
+  const items = [];
+  for (const auction of pagination.items) {
+    if (detail === "full") {
+      items.push(await compactEndedAuction(auction, true, report));
+      continue;
+    }
+    const row = await compactEndedAuction(auction, false);
+    if (!auction.item_bytes) {
+      Object.assign(row, { item_id: null, item_name: null, decode_status: "no_item_bytes" });
+    } else if (decodesPerformed >= decodeBudget) {
+      decodeBudgetExhausted = true;
+      Object.assign(row, { item_id: null, item_name: null, decode_status: "decode_budget_exhausted" });
+    } else {
+      decodesPerformed += 1;
+      Object.assign(row, await decodeEndedAuctionItemIdentity(auction));
+    }
+    items.push(row);
+  }
+  pagination.items = items;
 
   return json({
     success: true,
@@ -379,6 +428,10 @@ export async function handleEndedAuctions(url, env) {
       coverage: "Auctions ended during Hypixel's recent-ended window, normally about 60 seconds.",
       query: query || null,
       detail,
+      decode_budget: decodeBudget,
+      decodes_performed: decodesPerformed,
+      decode_budget_exhausted: decodeBudgetExhausted,
+      truncated: report.truncated,
       ...pagination,
     },
   });

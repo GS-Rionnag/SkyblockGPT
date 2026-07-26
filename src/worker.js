@@ -1,6 +1,7 @@
 import { ClientError, json, privacyPolicy, UpstreamError } from "./http.js";
 import {
   handlePlayerAccessories,
+  handlePlayerBestiary,
   handlePlayerCollections,
   handlePlayerExtra,
   handleProfiles,
@@ -22,18 +23,22 @@ import {
   handleLowestBin,
 } from "./routes/market.js";
 import { handleFeed, handleResources } from "./routes/misc.js";
+import { handleGuild, handleNetwork } from "./routes/network.js";
 
 const ROUTES = new Map([
   ["/v1/player/profiles", handleProfiles],
   ["/v1/player/summary", handleSummary],
   ["/v1/player/section", handleSection],
   ["/v1/player/collections", handlePlayerCollections],
+  ["/v1/player/bestiary", handlePlayerBestiary],
   ["/v1/player/accessories", handlePlayerAccessories],
   ["/v1/player/inventories", handleInventoryIndex],
   ["/v1/player/inventory", handleInventoryContainer],
   ["/v1/player/item", handleInventoryItem],
   ["/v1/player/sacks", handleSacks],
   ["/v1/player/extra", handlePlayerExtra],
+  ["/v1/guild", handleGuild],
+  ["/v1/network", handleNetwork],
   ["/v1/resources", handleResources],
   ["/v1/feed", handleFeed],
   ["/v1/bazaar/products", handleBazaarProducts],
@@ -67,7 +72,7 @@ export default {
       return json({
         success: true,
         service: "skyblock-gpt-unified-gateway",
-        version: "2.7.0",
+        version: "2.10.0",
         providers: ["Hypixel"],
       });
     }

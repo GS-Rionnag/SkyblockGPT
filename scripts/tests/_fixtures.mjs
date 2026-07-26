@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import worker from "../../src/worker.js";
 
 export const playerUuid = "0123456789abcdef0123456789abcdef";
@@ -5,6 +6,73 @@ export const profileId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 export const itemNbt = "H4sIAAAAAAAAAB2NQQqCQBhGv1ErHaKu0KoLtGtnarRIhTpA/OGfDIwZ4wxUF/IeHiyyto/3eBKIIJQEIDx4qsJaYJK07m6FhG+p9hEdVMV7TXU3Wh+JWaW6h6ZXhODYGg5/LeZDfxt6nZR5XhYhgoIaxmKE8dsZXu20YwuJZfa0hmJrjbo6y134f8pTll5O5TnbbgAP05Qaqhk+8AVIrd2eoAAAAA==";
 
 export const env = { HYPIXEL_API_KEY: "hypixel-test", GPT_SHARED_SECRET: "shared-test" };
+
+// Minimal NBT writer so tests can build inventory blobs with exact item IDs,
+// enchantment levels, and nested bag byte arrays. Type mapping: number ->
+// Int32, string -> String, { __bytes } -> ByteArray, array -> List, object ->
+// Compound. That subset is all the Worker's reader needs for these fixtures.
+function nbtTypeOf(value) {
+  if (typeof value === "number") return 3;
+  if (typeof value === "string") return 8;
+  if (Array.isArray(value)) return 9;
+  if (value && typeof value === "object" && Array.isArray(value.__bytes)) return 7;
+  if (value && typeof value === "object") return 10;
+  throw new Error(`Unsupported NBT fixture value: ${value}`);
+}
+
+function writeNbtPayload(parts, value) {
+  const type = nbtTypeOf(value);
+  if (type === 3) {
+    const buffer = Buffer.alloc(4);
+    buffer.writeInt32BE(value);
+    parts.push(buffer);
+  } else if (type === 8) {
+    const text = Buffer.from(value, "utf8");
+    const length = Buffer.alloc(2);
+    length.writeUInt16BE(text.length);
+    parts.push(length, text);
+  } else if (type === 7) {
+    const length = Buffer.alloc(4);
+    length.writeInt32BE(value.__bytes.length);
+    parts.push(length, Buffer.from(value.__bytes.map((byte) => byte & 0xff)));
+  } else if (type === 9) {
+    const header = Buffer.alloc(5);
+    header.writeUInt8(value.length ? nbtTypeOf(value[0]) : 10, 0);
+    header.writeInt32BE(value.length, 1);
+    parts.push(header);
+    for (const item of value) writeNbtPayload(parts, item);
+  } else {
+    for (const [key, child] of Object.entries(value)) {
+      parts.push(Buffer.from([nbtTypeOf(child)]));
+      writeNbtPayload(parts, key);
+      writeNbtPayload(parts, child);
+    }
+    parts.push(Buffer.from([0]));
+  }
+}
+
+// Raw gzipped NBT bytes of an inventory root { i: [...items] } — the format
+// nested *_backpack_data byte arrays store.
+export function encodeItemsNbtBytes(items) {
+  const parts = [Buffer.from([10]), Buffer.alloc(2)];
+  writeNbtPayload(parts, { i: items });
+  return [...gzipSync(Buffer.concat(parts))];
+}
+
+// Base64 blob form used by inventory containers.
+export function encodeItemsNbt(items) {
+  return Buffer.from(encodeItemsNbtBytes(items)).toString("base64");
+}
+
+export const nbtItem = (skyblockId, extraAttributes = {}, options = {}) => ({
+  id: options.vanillaId ?? 397,
+  Count: options.count ?? 1,
+  ...(options.slot !== undefined ? { Slot: options.slot } : {}),
+  tag: {
+    display: { Name: options.name ?? skyblockId },
+    ExtraAttributes: { id: skyblockId, ...extraAttributes },
+  },
+});
 
 export const auction = (uuid, price, bin = true) => ({
   uuid,
@@ -83,6 +151,12 @@ export function defaultHandlers() {
         { id: "RED_ROSE:3", name: "Azure Bluet" },
         { id: "ENCHANTED_TITANIUM", name: "Enchanted Titanium" },
         { id: "BOOSTER_COOKIE", name: "Booster Cookie" },
+        { id: "WOLF_TALISMAN", name: "Wolf Talisman", tier: "COMMON", category: "ACCESSORY" },
+        { id: "WOLF_RING", name: "Wolf Ring", tier: "RARE", category: "ACCESSORY" },
+        { id: "HEGEMONY_ARTIFACT", name: "Hegemony Artifact", tier: "LEGENDARY", category: "ACCESSORY" },
+        { id: "ABICASE", name: "Abicase", tier: "RARE", category: "ACCESSORY" },
+        { id: "ZOMBIE_TALISMAN", name: "Zombie Talisman", tier: "COMMON", category: "ACCESSORY" },
+        { id: "PARTY_HAT_CRAB", name: "Crab Hat", tier: "EPIC", category: "ACCESSORY" },
       ],
     }),
 
@@ -168,7 +242,10 @@ export function defaultHandlers() {
         [playerUuid]: {
           value: 1234,
           appraisal: false,
-          items: { ZOMBIE_SWORD: { donated_time: 1_700_000_000_000, items: { type: 0, data: itemNbt } } },
+          items: {
+            ZOMBIE_SWORD: { donated_time: 1_700_000_000_000, featured_slot: "A_1", items: { type: 0, data: itemNbt } },
+            UNDEAD_SWORD: { donated_time: 1_700_000_000_002, borrowing: true, items: { type: 0, data: itemNbt } },
+          },
           special: [{ donated_time: 1_700_000_000_001, items: { type: 0, data: itemNbt } }],
         },
       },
@@ -192,6 +269,82 @@ export function defaultHandlers() {
     "/v2/skyblock/firesales": () => Response.json({
       success: true,
       sales: [{ item_id: "DYE", start: 1, end: 2, amount: 3, price: 4 }],
+    }),
+
+    // exp 3,000,000 crosses exactly six levels of the SkyCrypt guild curve
+    // (100k+150k+250k+500k+750k+1m consumed, 250k left under the 1.25m step).
+    "/v2/guild": () => Response.json({
+      success: true,
+      guild: {
+        _id: "5f0000000000000000000abc",
+        name: "Test Guild",
+        tag: "TEST",
+        tagColor: "DARK_AQUA",
+        created: 1_600_000_000_000,
+        exp: 3_000_000,
+        guildExpByGameType: { SKYBLOCK: 2_000_000, BEDWARS: 500 },
+        publiclyListed: true,
+        members: [
+          {
+            uuid: playerUuid,
+            rank: "Guild Master",
+            joined: 1_600_000_000_001,
+            questParticipation: 7,
+            expHistory: { "2026-07-24": 100, "2026-07-23": 50 },
+          },
+          {
+            uuid: "ffffffffffffffffffffffffffffffff",
+            rank: "Member",
+            joined: 1_600_000_000_002,
+            expHistory: { "2026-07-24": 25 },
+          },
+          { uuid: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", rank: "Member", joined: 1_600_000_000_003 },
+        ],
+      },
+    }),
+
+    // No skyblock_angler on purpose: fishing must fall back to null, not 0.
+    "/v2/player": () => Response.json({
+      success: true,
+      player: {
+        uuid: playerUuid,
+        displayname: "TestPlayer",
+        newPackageRank: "MVP_PLUS",
+        monthlyPackageRank: "SUPERSTAR",
+        firstLogin: 1_500_000_000_000,
+        lastLogin: 1_700_000_000_000,
+        socialMedia: { links: { DISCORD: "test#0000", HYPIXEL: "https://hypixel.net/members/x" } },
+        claimed_potato_talisman: 1_600_000_000_000,
+        achievements: {
+          skyblock_harvester: 30,
+          skyblock_excavator: 25,
+          skyblock_combat: 44,
+          skyblock_gatherer: 21,
+          skyblock_augmentation: 20,
+          skyblock_concoctor: 12,
+          skyblock_domesticator: 33,
+          skyblock_dungeoneer: 40,
+          skyblock_slayer: 22,
+          skyblock_hard_working_miner: 9,
+          skyblock_treasure_hunter: 15,
+          bedwars_level: 100,
+        },
+      },
+    }),
+
+    "/v2/status": () => Response.json({
+      success: true,
+      uuid: playerUuid,
+      session: { online: true, gameType: "SKYBLOCK", mode: "dynamic_island", map: "Private Island" },
+    }),
+
+    "/v2/counts": () => Response.json({
+      success: true,
+      playerCount: 35_000,
+      games: {
+        SKYBLOCK: { players: 21_000, modes: { dynamic_island: 8_000, hub: 5_000 } },
+        BEDWARS: { players: 9_000 },
+      },
     }),
   };
 }

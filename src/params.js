@@ -67,6 +67,17 @@ export function requireUuid(url) {
   return normalizeUuid(raw);
 }
 
+// Optional Minecraft UUID under any parameter name: null when absent, a
+// normalized undashed UUID when present, 400 when present but malformed.
+export function readOptionalUuidParameter(url, name) {
+  const raw = (url.searchParams.get(name) || "").trim();
+  if (!raw) return null;
+  if (!UUID_PATTERN.test(raw)) {
+    throw new ClientError(`${name} must be a valid dashed or undashed Minecraft UUID.`, 400);
+  }
+  return normalizeUuid(raw);
+}
+
 export function cleanSelector(value) {
   const selector = (value || "").trim();
   if (!selector) return null;

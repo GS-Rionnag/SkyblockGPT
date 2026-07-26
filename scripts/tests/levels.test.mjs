@@ -9,6 +9,7 @@ import {
   PET_LADDERS,
   SLAYER_LADDERS,
   TABLE_VERSION,
+  cosmeticOverflow,
   levelFromLadder,
 } from "../../src/levels.js";
 
@@ -356,4 +357,48 @@ export async function run() {
   });
   assert.equal(fromSources.source_authority, LADDER_AUTHORITY_WIKI);
   assert.equal(fromSources.source_url, "https://hypixelskyblock.minecraft.wiki/Slayer");
+
+  // -------------------------------------------------------------------------
+  // cosmeticOverflow: the flat post-50 continuation ("After level 50, players
+  // can gain further, cosmetic levels every 200 million XP. This also applies
+  // to class levels."). The existing capped fields keep their semantics; the
+  // overflow rides in separate fields, never folded into `level`.
+  // -------------------------------------------------------------------------
+  const cataSource = LADDER_SOURCES.catacombs;
+  const cap50 = CATACOMBS_LADDER[49];
+
+  // 450m past the cap: two whole 200m cosmetic steps, 50m spare kept as XP.
+  const pastCap = levelFromLadder(cap50 + 450_000_000, cataSource.ladder, {
+    ...cataSource,
+    tableVersion: TABLE_VERSION,
+  });
+  const pastCapOverflow = cosmeticOverflow(pastCap);
+  assert.equal(pastCap.level, 50, "capped level semantics stay untouched");
+  assert.equal(pastCap.progress_to_next_level, 1);
+  assert.equal(pastCapOverflow.level_with_overflow, 52, "450m past 50 is two 200m cosmetic levels");
+  assert.equal(pastCapOverflow.overflow_xp, 450_000_000, "overflow keeps the raw post-cap XP");
+  assert.equal(pastCapOverflow.overflow_step_xp, CATACOMBS_COSMETIC_LEVEL_XP);
+
+  // The Dungeoneering trivia anchor end to end: 2^31-1 XP is Catacombs 57.
+  const trivia = cosmeticOverflow(levelFromLadder(2 ** 31 - 1, cataSource.ladder, {
+    ...cataSource,
+    tableVersion: TABLE_VERSION,
+  }));
+  assert.equal(trivia.level_with_overflow, 57, "2^31-1 XP reads as Catacombs 57 per the wiki trivia");
+
+  // Below the cap there is no overflow: level_with_overflow equals the level.
+  const belowCap = cosmeticOverflow(levelFromLadder(400, cataSource.ladder, {
+    ...cataSource,
+    tableVersion: TABLE_VERSION,
+  }));
+  assert.equal(belowCap.level_with_overflow, 4, "below the cap, overflow level equals the capped level (400 XP is level 4)");
+  assert.equal(belowCap.overflow_xp, 0, "below the cap the overflow bucket is a real zero, not XP into the level");
+
+  // An unavailable level derives no overflow either -- null, never zero.
+  const noXp = cosmeticOverflow(levelFromLadder(null, cataSource.ladder, {
+    ...cataSource,
+    tableVersion: TABLE_VERSION,
+  }));
+  assert.equal(noXp.level_with_overflow, null);
+  assert.equal(noXp.overflow_xp, null, "missing XP means overflow is unknown, not zero");
 }

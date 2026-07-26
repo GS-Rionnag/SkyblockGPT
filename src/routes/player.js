@@ -12,6 +12,7 @@ import {
   cleanSelector,
   GENERIC_UUID_PATTERN,
   normalizeUuid,
+  readDetailParameter,
   readIntegerParameter,
   readOptionalBooleanParameter,
   readTextParameter,
@@ -23,6 +24,7 @@ import {
   fetchHypixelJson,
   fetchProfiles,
   fetchSkillResource,
+  fetchSkyBlockItemCatalogMap,
   fetchSkyBlockItemNameMap,
 } from "../hypixel.js";
 import {
@@ -31,6 +33,7 @@ import {
   findSacksCounts,
   formatItemId,
 } from "../items.js";
+import { computeMagicalPower } from "../accessories.js";
 import {
   buildOverview,
   buildSection,
@@ -39,6 +42,7 @@ import {
   compactPlayerCollections,
   PROFILE_SECTIONS,
 } from "../sections.js";
+import { computeBestiary } from "../bestiary.js";
 import {
   compactProfile,
   getMember,
@@ -95,7 +99,9 @@ export async function handleSection(url, env) {
 
   const [profiles, skillResource] = await Promise.all([
     fetchProfiles(uuid, env),
-    section === "skills" || section === "stats" ? fetchSkillResource(env) : Promise.resolve(null),
+    // overview embeds compactSkills, so it needs the resource just like the
+    // summary route; without it every overview skill level reads null.
+    ["skills", "stats", "overview"].includes(section) ? fetchSkillResource(env) : Promise.resolve(null),
   ]);
   const profile = selectProfile(profiles, uuid, selector);
   const member = getMember(profile, uuid);
@@ -104,6 +110,8 @@ export async function handleSection(url, env) {
     return json({ success: false, error: "The player is not a member of that profile." }, 404);
   }
 
+  const data = await buildSection(section, profile, member, skillResource);
+
   return json({
     success: true,
     uuid,
@@ -111,8 +119,10 @@ export async function handleSection(url, env) {
     section,
     payload_kind: `profile_section_${section}`,
     payload_version: "1",
-    data_present: true,
-    data: await buildSection(section, profile, member, skillResource),
+    // Sections that declare their own availability (data.data_present) drive
+    // the envelope flag; older sections without it keep the historical true.
+    data_present: typeof data?.data_present === "boolean" ? data.data_present : true,
+    data,
   });
 }
 
@@ -125,7 +135,10 @@ export async function handlePlayerCollections(url, env) {
     loadSelectedMember(url, env),
     fetchCollectionResource(env),
   ]);
-  const data = compactPlayerCollections(member, collectionResource, query, page, limit, includeUnlocks);
+  // The whole profile flows in, not just the member: co-op collection
+  // progress is shared, so tier truth needs every member's amounts plus the
+  // queried member's unlocked_coll_tiers.
+  const data = compactPlayerCollections(profile, member, collectionResource, query, page, limit, includeUnlocks);
 
   return json({
     success: true,
@@ -133,8 +146,54 @@ export async function handlePlayerCollections(url, env) {
     profile: compactProfile(profile, uuid),
     payload_kind: "player_collections",
     payload_version: "1",
-    data_present: data.collection_api_present,
+    data_present: data.data_present,
     data,
+  });
+}
+
+export async function handlePlayerBestiary(url, env) {
+  const query = readTextParameter(url, "query", 100, "").toLowerCase();
+  const page = readIntegerParameter(url, "page", 0, 0, 10_000);
+  const limit = readIntegerParameter(url, "limit", 50, 1, 100);
+  const { uuid, profile, member } = await loadSelectedMember(url, env);
+  const computed = computeBestiary(member);
+  const matchingFamilies = computed.families.filter((family) => !query ||
+    `${family.family_id} ${family.name} ${family.category_name || ""}`.toLowerCase().includes(query));
+  const pagination = paginateRecords(matchingFamilies, page, limit);
+
+  return json({
+    success: true,
+    uuid,
+    profile: compactProfile(profile, uuid),
+    payload_kind: "player_bestiary",
+    payload_version: "1",
+    data_present: computed.data_present,
+    data: {
+      payload_kind: "player_bestiary",
+      payload_version: "1",
+      data_present: computed.data_present,
+      available: computed.data_present,
+      bestiary_api_present: computed.data_present,
+      milestone: computed.milestone,
+      max_milestone: computed.max_milestone,
+      bestiary_level: computed.bestiary_level,
+      max_bestiary_level: computed.max_bestiary_level,
+      families_total: computed.families_total,
+      families_unlocked: computed.families_unlocked,
+      families_maxed: computed.families_maxed,
+      untracked_kill_keys: computed.untracked_kill_keys,
+      last_claimed_milestone: computed.last_claimed_milestone,
+      query: query || null,
+      page: pagination.page,
+      limit: pagination.limit,
+      total_items: pagination.total_items,
+      total_pages: pagination.total_pages,
+      has_more: pagination.has_more,
+      families: pagination.items,
+      reason: computed.data_present
+        ? null
+        : "Hypixel did not expose bestiary kill data (member.bestiary.kills) for this player on this profile.",
+    },
   });
 }
 
@@ -142,7 +201,11 @@ export async function handlePlayerAccessories(url, env) {
   const query = readTextParameter(url, "query", 100, "").toLowerCase();
   const page = readIntegerParameter(url, "page", 0, 0, 10_000);
   const limit = readIntegerParameter(url, "limit", 50, 1, 100);
-  const { uuid, profile, member } = await loadSelectedMember(url, env);
+  const [{ uuid, profile, member }, itemCatalog] = await Promise.all([
+    loadSelectedMember(url, env),
+    // Base accessory tiers for computed MP; null keeps the MP unavailable.
+    fetchSkyBlockItemCatalogMap(env),
+  ]);
   const compact = await compactAccessories(member);
   const allAccessories = Array.isArray(compact.accessories) ? compact.accessories : [];
   const bagSettings = objectOrEmpty(compact.bag_settings);
@@ -183,6 +246,11 @@ export async function handlePlayerAccessories(url, env) {
         bagSettings.current_magical_power,
         bagSettings.magicalPower
       ),
+      // Proxy-computed MP (SkyCrypt rules); null when the bag or the items
+      // catalog is unavailable - never a guessed zero.
+      computed_magical_power: compact.available === true
+        ? computeMagicalPower(allAccessories, member, itemCatalog)
+        : null,
       selected_power: stringOrNull(
         bagSettings.selected_power ?? bagSettings.selectedPower
       ),
@@ -324,15 +392,19 @@ export async function handlePlayerExtra(url, env) {
   });
   const query = readTextParameter(url, "query", 100, "").toLowerCase();
   const page = readIntegerParameter(url, "page", 0, 0, 10_000);
-  const limit = readIntegerParameter(url, "limit", 20, 1, 40);
-  const museum = await compactMuseum(payload.profile || {}, query, page, limit);
+  const requestedLimit = readIntegerParameter(url, "limit", 20, 1, 40);
+  const detail = readDetailParameter(url);
+  // Full detail is bounded like the inventory container route: few entries
+  // per page, and compactMuseum caps expanded items per entry.
+  const limit = detail === "full" ? Math.min(requestedLimit, 5) : requestedLimit;
+  const museum = await compactMuseum(payload.profile || {}, query, page, limit, detail);
 
   return json({
     success: true,
     uuid,
     profile: compactProfile(selectedProfile, uuid),
     kind,
-    data: museum,
+    data: { ...museum, requested_limit: requestedLimit },
   });
 }
 

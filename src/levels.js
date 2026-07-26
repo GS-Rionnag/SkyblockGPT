@@ -75,6 +75,8 @@ export const CATACOMBS_LADDER = [
 // highest reached by any player as of July 2026 is 156), so CATACOMBS_LADDER
 // stops at the last threshold the wiki actually tabulates and the flat post-50
 // step is exposed separately rather than invented out to an arbitrary level.
+// Corroborated against SkyCrypt v1 src/constants/leveling.js, whose
+// dungeoneering_xp table ends with the same flat step (51: 200000000).
 export const CATACOMBS_COSMETIC_LEVEL_XP = 200000000;
 
 // ---------------------------------------------------------------------------
@@ -376,6 +378,26 @@ export const LADDER_SOURCES = {
     sourceRevision: null,
   },
 };
+
+// Source: https://hypixelskyblock.minecraft.wiki/Dungeoneering -- "After level
+// 50, players can gain further, cosmetic levels every 200 million XP. This
+// also applies to class levels." Computed on top of a levelFromLadder result
+// whose ladder stops at the tabulated cap: the existing fields keep their
+// capped semantics (level 50, progress 1) and the flat post-50 continuation
+// is reported in separate fields, never folded into `level`.
+export function cosmeticOverflow(result, stepXp = CATACOMBS_COSMETIC_LEVEL_XP) {
+  const step = optionalNumber(stepXp);
+  if (!result?.available || step === null || step <= 0) {
+    return { level_with_overflow: null, overflow_xp: null, overflow_step_xp: step };
+  }
+  const atMax = result.level >= result.max_level;
+  const overflowXp = atMax ? Math.max(0, optionalNumber(result.xp_into_level) ?? 0) : 0;
+  return {
+    level_with_overflow: result.level + (atMax ? Math.floor(overflowXp / step) : 0),
+    overflow_xp: overflowXp,
+    overflow_step_xp: step,
+  };
+}
 
 function unavailable(experience, tableVersion, authority, sourceUrl) {
   return {

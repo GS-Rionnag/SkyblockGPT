@@ -85,6 +85,34 @@ function loadoutWardrobeContainers(member, existing) {
     .filter((entry) => entry.parts.length > 0);
 }
 
+// Known top-level member roots from the legacy (pre-`member.inventory`)
+// profile format, plus co-op shared storage. This explicit allowlist replaces
+// the old substring-regex scan, which both missed member.rift.* entirely and
+// would index any unrelated future key containing an inventory-ish word.
+// Every container id produced by the old scan is unchanged.
+const MEMBER_ROOT_KEYS = [
+  "inv_contents",
+  "inv_armor",
+  "ender_chest_contents",
+  "equipment_contents",
+  "wardrobe_contents",
+  "talisman_bag",
+  "fishing_bag",
+  "potion_bag",
+  "quiver",
+  "candy_inventory_contents",
+  "personal_vault_contents",
+  "backpack_contents",
+  "backpack_icons",
+  "bag_contents",
+  "shared_inventory",
+];
+
+// member.rift.inventory blobs never matched the old scan, and the rift
+// section truncates them to undecodable base64. They are indexed with a
+// rift_ id prefix so rift gear is readable via the normal container flow.
+const RIFT_INVENTORY_ROOT_KEYS = ["inv_contents", "inv_armor", "equipment_contents", "ender_chest_contents"];
+
 export function findNbtContainers(member) {
   const found = new Map();
   const visited = new WeakSet();
@@ -115,17 +143,59 @@ export function findNbtContainers(member) {
     scan(member.inventory, "inventory", 0);
   }
 
-  for (const [key, value] of Object.entries(member || {})) {
-    if (key === "inventory" || !/(?:contents|inventory|armor|equipment|wardrobe|backpack|bag|quiver|vault)/i.test(key)) {
-      continue;
-    }
+  for (const key of MEMBER_ROOT_KEYS) {
+    const value = member?.[key];
     if (value && typeof value === "object") scan(value, key, 0);
+  }
+
+  const riftInventory = member?.rift?.inventory;
+  if (riftInventory && typeof riftInventory === "object") {
+    for (const key of RIFT_INVENTORY_ROOT_KEYS) {
+      const value = riftInventory[key];
+      if (value && typeof value === "object") scan(value, `rift_${key}`, 0);
+    }
   }
 
   const containers = [...found.values()].filter((entry) => entry.kind !== "backpack_icon");
   containers.push(...loadoutWardrobeContainers(member, containers));
 
   return containers.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+// Wardrobe/loadout metadata that lives beside the item blobs: which set is
+// equipped and the saved loadout configurations (names, linked armor set,
+// power stone, pet, tuning slot). Returns null when Hypixel exposed neither
+// the legacy pointer nor member.loadout - unavailable, not empty.
+export function loadoutMetadata(member) {
+  const loadout = member?.loadout && typeof member.loadout === "object" ? member.loadout : null;
+  const legacyEquippedSlot = optionalNumber(member?.inventory?.wardrobe_equipped_slot);
+  if (!loadout && legacyEquippedSlot === null) return null;
+
+  const savedLoadouts = loadout?.loadouts && typeof loadout.loadouts === "object" ? loadout.loadouts : null;
+  let loadouts = null;
+  if (savedLoadouts) {
+    loadouts = Object.entries(savedLoadouts)
+      .filter(([key, entry]) => /^\d+$/.test(key) && entry && typeof entry === "object")
+      .map(([key, entry]) => ({
+        index: Number(key),
+        id: optionalNumber(entry.id),
+        name: cleanItemName(entry.name),
+        armor_set_id: optionalNumber(entry.armor_set_id),
+        power_stone: stringOrNull(entry.power_stone),
+        pet: stringOrNull(entry.pet),
+        tuning_points_slot: optionalNumber(entry.tuning_points_slot),
+      }))
+      .sort((left, right) => left.index - right.index)
+      .slice(0, 40);
+  }
+
+  return {
+    // Legacy pointer into inventory.wardrobe_contents (1-based; -1 = none).
+    wardrobe_equipped_slot: legacyEquippedSlot,
+    armor_equipped_set: optionalNumber(loadout?.armor?.equipped_set),
+    equipment_equipped_set: optionalNumber(loadout?.equipment?.equipped_set),
+    loadouts,
+  };
 }
 
 export function findSacksCounts(member) {
@@ -164,6 +234,13 @@ export function containerMetadata(container) {
 
 function inventoryContainerKind(path) {
   const value = path.toLowerCase();
+  if (value.startsWith("rift_")) {
+    if (/inv_armor/.test(value)) return "rift_armor";
+    if (/equipment/.test(value)) return "rift_equipment";
+    if (/ender_chest/.test(value)) return "rift_ender_chest";
+    return "rift_inventory";
+  }
+  if (/carnival_mask/.test(value)) return "carnival_masks";
   if (/talisman|accessor/.test(value)) return "accessory_bag";
   if (/inv_armor|\.armor/.test(value)) return "armor";
   if (/equipment/.test(value)) return "equipment";
@@ -199,6 +276,11 @@ const CONTAINER_LABELS = {
   sacks_bag: "Sacks Bag",
   inventory: "Main Inventory",
   bag: "Bag",
+  rift_inventory: "Rift Main Inventory",
+  rift_armor: "Rift Worn Armor",
+  rift_equipment: "Rift Equipment",
+  rift_ender_chest: "Rift Ender Chest",
+  carnival_masks: "Carnival Masks",
   other: "Item Container",
 };
 
@@ -326,12 +408,18 @@ function compactNbtItem(item, fallbackSlot) {
 
   if (!skyblockId && !name && (!vanillaId || vanillaId === 0)) return null;
 
-  const attributeKeys = extra.attributes && typeof extra.attributes === "object"
-    ? Object.keys(extra.attributes)
+  const attributeEntries = extra.attributes && typeof extra.attributes === "object"
+    ? Object.entries(extra.attributes).slice(0, 20)
     : [];
-  const enchantmentKeys = extra.enchantments && typeof extra.enchantments === "object"
-    ? Object.keys(extra.enchantments)
+  const attributeCount = extra.attributes && typeof extra.attributes === "object"
+    ? Object.keys(extra.attributes).length
+    : 0;
+  const enchantmentEntries = extra.enchantments && typeof extra.enchantments === "object"
+    ? Object.entries(extra.enchantments).slice(0, 50)
     : [];
+  const enchantmentCount = extra.enchantments && typeof extra.enchantments === "object"
+    ? Object.keys(extra.enchantments).length
+    : 0;
 
   return {
     slot,
@@ -341,14 +429,52 @@ function compactNbtItem(item, fallbackSlot) {
     reforge: stringOrNull(extra.modifier),
     stars: optionalNumber(extra.upgrade_level ?? extra.dungeon_item_level),
     recombobulated: number(extra.rarity_upgrades) > 0,
-    attributes: attributeKeys.slice(0, 20),
-    attributes_truncated: attributeKeys.length > 20,
-    enchantments: enchantmentKeys.slice(0, 50),
-    enchantments_truncated: enchantmentKeys.length > 50,
+    attributes: attributeEntries.map(([key]) => key),
+    attributes_truncated: attributeCount > 20,
+    // Parallel {name: level} maps: the key arrays above are contractual, but
+    // levels matter for most gear questions and cost only a few bytes.
+    attribute_levels: Object.fromEntries(attributeEntries.map(([key, value]) => [key, optionalNumber(value)])),
+    enchantments: enchantmentEntries.map(([key]) => key),
+    enchantments_truncated: enchantmentCount > 50,
+    enchantment_levels: Object.fromEntries(enchantmentEntries.map(([key, value]) => [key, optionalNumber(value)])),
   };
 }
 
-export function expandNbtItem(record) {
+// Nested-container decode bounds for full item detail: ExtraAttributes keys
+// like small_backpack_data or new_year_cake_bag_data hold a gzipped NBT byte
+// array of the bag's contents, which sanitize() would otherwise dump as a
+// useless truncated number list.
+const CONTAINED_BAGS_PER_ITEM = 3;
+const CONTAINED_ITEMS_PER_BAG = 24;
+const CONTAINED_BAG_PLACEHOLDER = "[decoded in contained_items]";
+
+function isNbtByteArray(value) {
+  return Array.isArray(value) && value.length >= 10 && value.every((entry) => typeof entry === "number");
+}
+
+async function decodeContainedBag(bytes) {
+  try {
+    // NBT byte arrays may surface signed; normalize to unsigned octets.
+    const binary = Uint8Array.from(bytes, (value) => value & 0xff);
+    const uncompressed = await decompressGzip(binary);
+    const root = new NbtReader(uncompressed).readRoot();
+    const rawItems = Array.isArray(root?.i) ? root.i : [];
+    const summaries = rawItems
+      .map((child, index) => compactNbtItem(child, index))
+      .filter(Boolean);
+    return {
+      total_items: summaries.length,
+      items: summaries.slice(0, CONTAINED_ITEMS_PER_BAG),
+      items_truncated: summaries.length > CONTAINED_ITEMS_PER_BAG,
+      decode_error: null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown NBT decoding error.";
+    return { total_items: null, items: [], items_truncated: false, decode_error: message.slice(0, 300) };
+  }
+}
+
+export async function expandNbtItem(record, report = null) {
   const item = record.raw || {};
   const tag = item.tag && typeof item.tag === "object" ? item.tag : {};
   const extra = tag.ExtraAttributes && typeof tag.ExtraAttributes === "object"
@@ -361,13 +487,31 @@ export function expandNbtItem(record) {
     ? display.Lore.slice(0, 120).map(cleanItemName).filter(Boolean)
     : [];
 
+  const bagEntries = Object.entries(extra).filter(([key, value]) => key.endsWith("_data") && isNbtByteArray(value));
+  const containedItems = [];
+  for (const [key, value] of bagEntries.slice(0, CONTAINED_BAGS_PER_ITEM)) {
+    containedItems.push({ source_key: key, ...(await decodeContainedBag(value)) });
+  }
+
+  let cleanExtra = extra;
+  let cleanItem = item;
+  if (bagEntries.length) {
+    cleanExtra = { ...extra };
+    for (const [key] of bagEntries) cleanExtra[key] = CONTAINED_BAG_PLACEHOLDER;
+    cleanItem = tag.ExtraAttributes === extra
+      ? { ...item, tag: { ...tag, ExtraAttributes: cleanExtra } }
+      : { ...item, ExtraAttributes: cleanExtra };
+  }
+
   return {
     ...record.summary,
     minecraft_id: optionalNumber(item.id),
     damage: optionalNumber(item.Damage),
     lore,
-    extra_attributes: sanitize(extra, 12, 1_500),
-    nbt: sanitize(item, 12, 1_500),
+    contained_items: containedItems,
+    contained_bags_truncated: bagEntries.length > CONTAINED_BAGS_PER_ITEM,
+    extra_attributes: sanitize(cleanExtra, 12, 1_500, report),
+    nbt: sanitize(cleanItem, 12, 1_500, report),
   };
 }
 

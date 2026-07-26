@@ -7,6 +7,7 @@ import {
   expandNbtItem,
   findNbtContainers,
   findSacksCounts,
+  loadoutMetadata,
 } from "../items.js";
 import { compactProfile, loadSelectedMember } from "../profiles.js";
 
@@ -26,6 +27,9 @@ export async function handleInventoryIndex(url, env) {
       available: containers.length > 0,
       total_containers: containers.length,
       containers: containers.map(containerMetadata),
+      // Which wardrobe/equipment set is equipped plus saved loadout configs;
+      // null when Hypixel exposed no loadout or legacy wardrobe pointer.
+      loadout: loadoutMetadata(member),
       sacks: {
         available: sacksCounts !== null,
         nonzero_item_types: nonzeroSackCounts.length,
@@ -81,7 +85,9 @@ export async function handleInventoryContainer(url, env) {
       total_items: records.length,
       total_pages: Math.ceil(records.length / limit),
       has_more: start + limit < records.length,
-      items: pageRecords.map((record) => detail === "full" ? expandNbtItem(record) : record.summary),
+      items: detail === "full"
+        ? await Promise.all(pageRecords.map((record) => expandNbtItem(record)))
+        : pageRecords.map((record) => record.summary),
     },
   });
 }
@@ -112,7 +118,7 @@ export async function handleInventoryItem(url, env) {
     profile: compactProfile(profile, uuid),
     data: {
       container: containerMetadata(container),
-      item: expandNbtItem(record),
+      item: await expandNbtItem(record),
     },
   });
 }

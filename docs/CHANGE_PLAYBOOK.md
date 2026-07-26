@@ -55,7 +55,7 @@ Do not create another Action set for the same Worker domain.
 5. Add representative API-enabled, missing, and partial fixtures to the Worker test.
 6. Add a short calling rule to `gpt/instructions.md` only if necessary.
 
-For large lists, prefer a dedicated typed/pageable endpoint instead of overloading the generic section route. Accessories and Collections already follow this pattern.
+For large lists, prefer a dedicated typed/pageable endpoint instead of overloading the generic section route. Accessories, Collections, and Bestiary already follow this pattern.
 
 ## Inventory or NBT change
 

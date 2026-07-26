@@ -3,9 +3,11 @@ import { run as runPlayer } from "./tests/player.test.mjs";
 import { run as runMarket } from "./tests/market.test.mjs";
 import { run as runCache } from "./tests/cache.test.mjs";
 import { run as runSections } from "./tests/sections.test.mjs";
+import { run as runBestiary } from "./tests/bestiary.test.mjs";
 import { run as runUtil } from "./tests/util.test.mjs";
 import { run as runItems } from "./tests/items.test.mjs";
 import { run as runLevels } from "./tests/levels.test.mjs";
+import { run as runNetwork } from "./tests/network.test.mjs";
 
 const suites = [
   ["health", runHealth],
@@ -13,9 +15,11 @@ const suites = [
   ["market", runMarket],
   ["cache", runCache],
   ["sections", runSections],
+  ["bestiary", runBestiary],
   ["util", runUtil],
   ["items", runItems],
   ["levels", runLevels],
+  ["network", runNetwork],
 ];
 
 let failed = 0;
