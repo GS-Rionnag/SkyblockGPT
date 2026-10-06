@@ -17,6 +17,6 @@
     "release:zip": "node scripts/package-release.mjs"
   },
   "devDependencies": {
-    "wrangler": "4.141.0"
+    "wrangler": "4.147.0"
   }
 }
